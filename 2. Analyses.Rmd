@@ -1,8 +1,8 @@
 ---
-title: "Bayesian Assignment"
-author: "Christoph Völtzke (9769870)"
+title: "Bayesian Regression Analyses"
+author: "Christoph Völtzke"
 date: "15 6 2022"
-output: html_document
+output: pdf_document
 ---
 
 ```{r setup, include=FALSE}

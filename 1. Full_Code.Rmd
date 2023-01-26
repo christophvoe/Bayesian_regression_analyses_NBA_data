@@ -1,5 +1,5 @@
 ---
-title: "Assignment Bayesian_9769870_Code_Only"
+title: "Code_Only"
 author: "Christoph Völtzke"
 date: "15 6 2022"
 output: html_document
