@@ -1,0 +1,158 @@
+---
+title: "Bayesian Assignment"
+author: "Christoph Völtzke (9769870)"
+date: "15 6 2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, results = "hide", message=FALSE, warning=FALSE}
+library(tidyverse)
+library(readr)
+library(bain)
+library(papaja)
+library(tinylabels)
+library(kableExtra)
+library(RColorBrewer)
+```
+
+## Introduction to the data
+
+In this file all analyses for different combinations of predictors is conducted. Not all of these analyses are conducted in the original manuscript file.
+```{r, results = "hide", message=FALSE, warning=FALSE}
+# Load the data - I mention in the text where I got the data from 
+nba <- read.table("Data/nba.csv", sep=",", header=T)
+```
+
+```{r investiagte assumptions of data set,include=FALSE}
+# not included as too much space in html
+# if you want ot see the plots
+# inspect the data and check the normality of the Residuals
+hist(nba$Salary, main = "Distribution of Log transformed salary in 2022 season") # this variable is highly skewed, so we take the log of the salary to get a more normal distribution
+hist(nba$PTS, main = "Distribution of Average Number of Points per game")
+hist(nba$AST, main = "Distribution of Average Number of Assists per game")
+hist(nba$DRB, main = "Distribution of Average Number of Defensive Rebounds per game")
+hist(nba$STL, main = "Distribution of Average Number of Steals per game") # all other variables seem to follow a normal distribution so I do not have to expect severe violations of normality.
+qqnorm(log(nba$Salary), main = 'Normal Q-Q plot Salary'); qqline(log(nba$Salary)) 
+qqnorm(nba$PTS, main = 'Normal Q-Q plot Points'); qqline(nba$PTS)
+qqnorm(nba$AST, main = 'Normal Q-Q plot Assists'); qqline(nba$AST)
+qqnorm(nba$DRB, main = 'Normal Q-Q plot Defensive Rebounds'); qqline(nba$DRB)
+qqnorm(nba$STL, main = 'Normal Q-Q plot Steals'); qqline(nba$STL) # next, I also checked for linearity.Also here, no severe violations can be observed. Therefore, we can continue with this data in the following analyses 
+```
+
+```{r}
+hist(nba$Salary, main = "Distribution of Log transformed salary in 2022 season") # this variable is highly skewed, so we take the log of the salary to get a more normal distribution
+hist(nba$PTS, main = "Distribution of Average Number of Points per game")
+hist(nba$AST, main = "Distribution of Average Number of Assists per game")
+hist(nba$DRB, main = "Distribution of Average Number of Defensive Rebounds per game")
+hist(nba$STL, main = "Distribution of Average Number of Steals per game") # all other variables seem to follow a normal distribution so I do not have to expect severe violations of normality.
+```
+
+## 1 - specify prior distributions for your parameters
+```{r set all initial prior and data sets}
+set.seed(976) # set a seed for reproducability
+# initial values are randomly chosen between 1 and 8 and are right now for 3 chains -  I also included matrices of initial values for a varying number of predictors
+init2_1<- matrix(runif(4, min=1, max=8))
+init2_2 <- matrix(runif(4, min=1, max=8))
+init2_3 <- matrix(runif(4, min=1, max=8))
+init2 <- rbind(matrix(init2_1,1,4),matrix(init2_2,1,4),matrix(init2_3,1,4))
+
+init4_1 <- matrix(runif(6, min=1, max=8))
+init4_2 <- matrix(runif(6, min=1, max=8))
+init4_3 <- matrix(runif(6, min=1, max=8))
+init4 <- rbind(matrix(init4_1,1,6),matrix(init4_2,1,6),matrix(init4_3,1,6))
+                                                              
+# uninformative priors for normal distribution - For now I set them to be uninformative as I don't have any knowledge about the size of the effects. In later stages I will try to incorporate historical data to make use of informative priors.
+sigma02 <- c(1000,1000,1000); mu02 <- c(0,0,0)
+sigma04 <- c(1000,1000,1000,1000,1000); mu04 <- c(0,0,0,0,0)
+
+# uninformative priors for inverse gamma distribution, these to values are specified before and don't need to be entered in the function as I didn't intend to change them
+alpha0 <- 0.001; beta0 <- 0.001
+
+# specifying the data sets including the predictors of interest - As I am interested in the effect of different predictors on the salary I try out several combinations of predictors - All of these data frames are used in the functions so keep the right naming in mind
+x2 <- cbind(nba$DRB,nba$AST)
+x2.1 <- cbind(nba$PTS,nba$AST)
+x2.2 <- cbind(nba$DRB,nba$STL)
+x2.3 <- cbind(nba$PTS,nba$DRB)
+x4 <- cbind(nba$PTS,nba$AST,nba$DRB,nba$STL)
+
+y <- log(nba$Salary)
+```
+
+## 2./3.  Gibbs sampler & Metropolis-Hastings step
+
+```{r}
+# For full functions see Full_code.Rmd or the seperate functions
+source("Functions/bayesian_regression.R")
+```
+
+
+## 4. - Assess convergence of the model
+
+```{r}
+# For full functions see Full_code.Rmd or the seperate functions
+source("Functions/Convergence.R")
+```
+
+## 5. - Check a model assumption with PPP
+
+```{r}
+# For full functions see Full_code.Rmd or the seperate functions
+source("Functions/Posterior_predictive_p_value.R")
+```
+
+## 6. - Obtain parameter estimates, credible intervals
+```{r parameter estimates and credible intervals}
+# the output includes the parameter estimates for each sampled parameter as well as the credible intervals and further descriptive statistics, which might be of interest
+twopred <- bayesian_reg(y, x2, init2, sigma02, mu02, 10000, 40000, 3, 976)
+twopred_O <- bayesian_reg(y, x2.1, init2, sigma02, mu02, 10000, 40000, 3, 976)
+twopred_D <- bayesian_reg(y, x2.2, init2, sigma02, mu02, 10000, 40000, 3, 976)
+twopred_OD <- bayesian_reg(y, x2.3, init2, sigma02, mu02, 10000, 40000, 3, 976)
+fourpred <- bayesian_reg(y, x4, init4, sigma04, mu04, 10000, 40000, 3, 976)
+```
+
+## 7. - a.) Compare multiple model by means of DIC
+```{r DIC}
+# Calculating the DIC for all models of relevance based on the output of the bayesian_reg function
+twopred$DIC
+twopred_O$DIC
+twopred_D$DIC
+twopred_OD$DIC
+fourpred$DIC
+```
+
+## 7- b.) Convergence
+
+```{r}
+convergencecheck(twopred$sampled_values_chains,50,976)
+convergencecheck(fourpred$sampled_values_chains,50,976)
+```
+
+## 7. - c.) Bayes factor
+```{r}
+# Models to be tested
+OLS4 <- lm(log(Salary) ~ PTS + AST + DRB + STL, data = nba)
+OLS2 <- lm(log(Salary) ~ AST + DRB, data = nba)
+
+set.seed(976)
+# Using the bain package to obtain the bayes factor
+# Bayes factor 1
+bf1 <- bain(OLS4, hypothesis = "PTS > 0 & DRB > 0 & AST > 0 & STL > 0", standardize = TRUE); print(bf1)
+# Bayes factor 2
+bf2 <- bain(OLS4, hypothesis = "PTS > DRB > AST> STL", standardize = TRUE); print(bf2)
+bf3 <- bain(OLS2, hypothesis = "AST> DRB", standardize = TRUE); print(bf3)
+bf1
+bf2
+bf3
+```
+
+## 7. - d.) PPP
+
+```{r}
+ppp(fourpred$sampled_values,y,x4,3000,976)
+ppp(twopred$sampled_values,y,x2,3000,976)
+```
+

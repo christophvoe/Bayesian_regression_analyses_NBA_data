@@ -1,7 +1,9 @@
-# Bayesian_regression_analyses_NBA_data
+Read me:
+
+The zip folder containts two data sets, one RMD.file, one PDF file and this Read me file. 
 
 1.To load the data sets you just need to load them according to the code in the RMD file, if you specified your working directory to the folder including the two data sets. Note: The file named "nba" is the file with the data I mainly worked with in this report. The code can be found in the chapter "Introduction to the data". The file "nba1617" also contains a full data set but is only used as historical data later in the report. Also for this data set, the code is in the RMD.file. The code can be found in the chapter "9. -  Differences between Bayesian and frequentist analyses".
 
 2. The RMD.file contains the whole code used in this report. All chunks except the ones with relevant output will not print anything. To get all estimates you need to run each chunk after each other. There are comments included to make the orientation easier. Basically, it is three big functions: one for the sampling, one to assess convergence and one to calculate posterior predictive p-values. Moreover, the latter two function built on the obtained estimates of the first function. Therefore, the models are run with the bayesian_reg function. The RMD.file is named "Assignment_9769870.Rmd".
 
-3. The PDF was created by means of an RMD.document. For this I used a seperate RMD.file as it included more then 500 lines and I needed to make some small adjustments due to the restriction of 6 pages. The PDF file is named "Assignment_9769870
+3. The PDF was created by means of an RMD.document. For this I used a seperate RMD.file as it included more then 500 lines and I needed to make some small adjustments due to the restriction of 6 pages. The PDF file is named "Assignment_9769870"

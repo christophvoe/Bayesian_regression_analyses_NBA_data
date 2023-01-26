@@ -1,0 +1,436 @@
+---
+title: "Assignment Bayesian_9769870_Code_Only"
+author: "Christoph Völtzke"
+date: "15 6 2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, results = "hide", message=FALSE, warning=FALSE}
+library(tidyverse) # using some tidy coding
+library(readr) # to load the data
+library(bain) # for Bayes factor
+library(RColorBrewer)
+```
+
+## Introduction to the data
+
+THIS DOCUMENT CONTAINS THE FULL CODE NEEDED TO RUN THE ANALYSES. IN THE OTHER DOCUMENT THE FUNCTIONS USED ARE SOURCED FROM THE SEPERATE R-SCRIPTS.
+
+```{r}
+# Load the data - I mention in the text where I got the data from 
+nba <- read.table("Data/nba.csv", sep=",", header=T) # use this command after setting your working directory to the file including this variable
+```
+
+```{r investiagte assumptions of data set}
+# inspect the data and check the normality of the Residuals
+hist(nba$Salary, main = "Distribution of Log transformed salary in 2022 season") # this variable is highly skewed, so we take the log of the salary to get a more normal distribution
+hist(nba$PTS, main = "Distribution of Average Number of Points per game")
+hist(nba$AST, main = "Distribution of Average Number of Assists per game")
+hist(nba$DRB, main = "Distribution of Average Number of Defensive Rebounds per game")
+hist(nba$STL, main = "Distribution of Average Number of Steals per game") # all other variables seem to follow a normal distribution so I do not have to expect severe violations of normality.
+qqnorm(log(nba$Salary), main = 'Normal Q-Q plot Salary'); qqline(log(nba$Salary)) 
+qqnorm(nba$PTS, main = 'Normal Q-Q plot Points'); qqline(nba$PTS)
+qqnorm(nba$AST, main = 'Normal Q-Q plot Assists'); qqline(nba$AST)
+qqnorm(nba$DRB, main = 'Normal Q-Q plot Defensive Rebounds'); qqline(nba$DRB)
+qqnorm(nba$STL, main = 'Normal Q-Q plot Steals'); qqline(nba$STL) # next, I also checked for linearity.Also here, no severe violations can be observed. Therefore, we can continue with this data in the following analyses 
+```
+## 1 - specify prior distributions for your parameters
+```{r set all initial prior and data sets}
+set.seed(976) # set a seed for reproducability
+# initial values are randomly chosen between 1 and 8 and are right now for 3 chains -  I also included matrices of initial values for a varying number of predictors
+init2_1<- matrix(runif(4, min=1, max=8)); init2_2 <- matrix(runif(4, min=1, max=8)); init2_3 <- matrix(runif(4, min=1, max=8))
+init2 <- rbind(matrix(init2_1,1,4),matrix(init2_2,1,4),matrix(init2_3,1,4))
+init4_1 <- matrix(runif(6, min=1, max=8)); init4_2 <- matrix(runif(6, min=1, max=8)); init4_3 <- matrix(runif(6, min=1, max=8))
+init4 <- rbind(matrix(init4_1,1,6),matrix(init4_2,1,6),matrix(init4_3,1,6))
+                                                              
+# uninformative priors for normal distribution - For now I set them to be uninformative as I don't have any knowledge about the size of the effects. In later stages I will try to incorporate historical data to make use of informative priors.
+sigma02 <- c(1000,1000,1000); mu02 <- c(0,0,0)
+sigma04 <- c(1000,1000,1000,1000,1000); mu04 <- c(0,0,0,0,0)
+
+# uninformative priors for inverse gamma distribution, these to values are specified before and don't need to be entered in the function as I didn't intend to change them
+alpha0 <- 0.001; beta0 <- 0.001
+
+# specifying the data sets including the predictors of interest - As I am interested in the effect of different predictors on the salary I try out several combinations of predictors - All of these data frames are used in the functions so keep the right naming in mind
+x2 <- cbind(nba$DRB,nba$AST); x2.1 <- cbind(nba$PTS,nba$AST); x2.2 <- cbind(nba$DRB,nba$STL); x2.3 <- cbind(nba$PTS,nba$DRB); x4 <- cbind(nba$PTS,nba$AST,nba$DRB,nba$STL)
+y <- log(nba$Salary)
+```
+
+## 2./3.  Gibbs sampler & Metropolis-Hastings step
+```{r bayesian regression function, include=FALSE}
+bayesian_reg <- function(y, # enter the y variable - labeled before
+                         x, # enter the right data set of predictors - all labeled before
+                         init, # enter matrix with initial values which fits to the number of predictors in x
+                         sigma0, # enter matrix with priors for sigma which fits to the number of predictors in x
+                         mu0, # enter matrix with priors for mu which fits to the number of predictors in x
+                         burnin, # specify a number of burned samples
+                         niter, # specify a number of wanted samples (take number of burn in into account)
+                         nchain, # specify a number of chains (take into account that you have to change the initial values matrix for that)
+                         seed # set a seed for reproducibility
+                         ){ # with this function you can obtain the estimates of a regression procedure using mcmc sampling methods. On top of that you can specify priors and also get an information criteria to compare models
+  # even though I don't need the option for one predictor for my analyses I included it as I initially planned to also test one predictor models
+  set.seed(seed)  # set a seed
+
+  if(is.vector(x)){ # assess the number of predictors in the model. As in case of 1 predictor there is no matrix I included the if else statement
+    npred <- ncol(matrix(x))
+  } else {
+    npred <- ncol(x)
+  }
+  # create storage for objects including estimates for multiple chains
+  samples <- vector("list", nchain) # all sampled estimates (including burn-in)
+  samples.burn <- vector("list", nchain) # sampled estimates without burn-in period
+  results <- vector("list", nchain) # summary of regression estimates
+  
+  # create matrix to get pooled estimates over all chains and assigning row and column names to make the output pretty
+   results.pooled <- matrix(0,(npred+2),9) 
+    if(npred == 1){rownames(results.pooled) <- c("Intercept","Beta 1","Variance")}
+    else if(npred == 2){rownames(results.pooled) <- c("Intercept","Beta 1","Beta 2","Variance")}
+    else if(npred == 3){rownames(results.pooled) <- c("Intercept","Beta 1","Beta 2","Beta 3","Variance")}
+    else {rownames(results.pooled) <- c("Intercept","Beta 1","Beta 2","Beta 3","Beta 4", "Variance")}
+    colnames(results.pooled) <- c("Mean","S.E.","MC-error","2.5%","Median","97.5%","Acceptance","Burn-in","Iterations")
+
+  for(h in 1:nchain){ # loop over the number of chains
+   
+    # assign the initial values to two matrices in order to not confuse the variance and the betas
+    b <- matrix(init[h,1:(ncol(init)-1)],1,ncol(init)-1) 
+    var <- matrix(init[h,ncol(init)],1,1)
+    
+    # create one matrix per chain
+    samples[[h]] <- matrix(0,niter,(npred+2))
+    samples[[h]][1,] <- c(b,var)
+    results[[h]] <- matrix(0,(npred+2),9)
+    
+    # for loop - sample as often as iterations are specified in the function
+    for(i in 2:niter){
+      # Gibbs step to sample the intercept
+      V <- 1/(length(y)/var + 1/sigma0[1])
+      if(npred == 1){
+        M <- (sum(y - x*b[,-1])/var + mu0[1]/sigma0[1])*V
+      } else {
+        M <- (sum(y - x%*%b[,-1])/var + mu0[1]/sigma0[1])*V # for more then 1 predictor using matrix algebra as we need all x's with the corresponding beta, except the intercept <- (b[,-1])
+      }
+      b[,1] <- rnorm(1,M,sqrt(V)) # sampling the value for beta 0 and save it in matrix b in first column
+      
+      # Metropolis Hastings step - Sampling beta 1 with the Metropolis Hastings step
+      b.curr <- b[,2]
+      b.prop <- rnorm(1,b.curr,0.005) # parameter which can be used to obtain changes regarding the acceptance ratio and autocorrelation - I already played around with it and I am most satisfied with this value
+      u <- runif(1,0,1) # sample random value between 0 and 1, which will be compared to my proposed estimate
+      
+      if(npred == 1){ # again adapting the way to get my likelihood based on the number of used predictors
+        V <- 1/(sum(x^2)/var)
+        M <- sum(x*(y - b[,1]))/var*V
+      } else if(npred == 2){
+        V <- 1/(sum(x[,1]^2)/var)
+        M <- sum(x[,1]*(y - b[,1] - x[,-1]*b[,-c(1:2)]))/var*V
+      } else {
+        V <- 1/(sum(x[,1]^2)/var)
+        M <- sum(x[,1]*(y - b[,1] - x[,-1]%*%b[,-c(1:2)]))/var*V
+      }
+      
+      likelihood.curr <- dnorm(b.curr,M,sqrt(V),log=TRUE) # obtaining the likelihood of the current and the proposed value based on the calculations above
+      likelihood.prop <- dnorm(b.prop,M,sqrt(V),log=TRUE)
+      
+      prior.curr <- dnorm(b.curr,mu0[2],sigma0[2],log=TRUE) # obtaining the likelihoods of the current and the proposed priors, which are needed for the calculations
+      prior.prop <- dnorm(b.prop,mu0[2],sigma0[2],log=TRUE)
+      
+      target.curr <- likelihood.curr + prior.curr # Again we need for the current and proposed option # as we are using the log transformed values the signs change (+ instead of *) - I am doing this as my data might be too skewed and this was proposed as one way to get rid of any estimation problems
+      target.prop <- likelihood.prop + prior.prop
+      
+      if(exp(target.prop - target.curr) > u){ # this statement evaluates if our proposed value is higher then the sampled value in u (between 0 and 1) - if it is higher we take our proposed estimate as the newest estimate otherwise we take the old value again as the estimate
+        b[,2] <- b.prop
+      } else {
+        b[,2] <- b.curr
+      }
+      
+      # Sampling all further betas again with Gibbs sampling - However, right now the function only works with three predictors as I specified some things above and below in a certain way. Could be altered for the use of infinetly many predictors
+      if(npred > 1){
+        for(j in 2:npred){ # this for loop runs from 2 to the specified number of predictors
+          V <- 1/(sum(x[,j]^2)/var + 1/sigma0[(j+1)])
+          if(npred == 2){
+            M <- (sum(x[,j]*(y - b[,1] - x[,-j]*b[,-c(1,j+1)]))/var + mu0[(j+1)]/sigma0[(j+1)])*V
+          } else {
+            M <- (sum(x[,j]*(y - b[,1] - x[,-j]%*%b[,-c(1,j+1)]))/var +
+                         mu0[(j+1)]/sigma0[(j+1)])*V
+          }
+          b[,(j+1)] <- rnorm(1,M,sqrt(V)) # rest is the same compared to other Gibbs sampling steps
+        }
+      }
+    
+      # Sampling the variance
+      A <- length(y)/2 + alpha0
+      if(npred == 1){
+        B <- sum((y - (b[,1] + x*b[,-1]))^2)/2 + beta0
+      } else {
+        B <- sum((y - (b[,1] + x%*%b[,-1]))^2)/2 + beta0
+      }
+      var <- 1/rgamma(1,shape=A,rate=B) # here we use the gamma function and taking the inverse of it. This is different to the other sampled values, but needed to get the estimates we want!
+      
+      samples[[h]][i,] <- c(b,var) # combine the two data sets of sampled values and save them in one data set.
+    } 
+    samples.burn[[h]] <- matrix(0,(niter-burnin),(npred+2)) # making a matrix where we can save only the values we are interested - so we  discard burn-in period
+    samples.burn[[h]] <- samples[[h]][(burnin+1):niter,]
+    samples.all <- do.call(rbind, samples.burn)  # combine the samples of each chain in one data set - In this way we can obtain the pooled estimates
+    
+    for(r in 1:(npred+2)){ # calculate the estimates, which appear in the output based on the pooled estimates
+      results.pooled[r,1] <- round(mean(samples.all[,r]), digits=3)
+      results.pooled[r,2] <- round(sd(samples.all[,r]), digits=3)
+      results.pooled[r,3] <- round(sd(samples.all[,r])/sqrt(niter*nchain-burnin*nchain), digits=5)
+      results.pooled[r,4] <- round(quantile(samples.all[,r],0.025), digits=3)
+      results.pooled[r,5] <- round(median(samples.all[,r]), digits=3)
+      results.pooled[r,6] <- round(quantile(samples.all[,r],0.975), digits=3)
+      results.pooled[r,7] <- round((length(unique(samples.all[,r]))/(niter-burnin))/nchain,digits=3)
+      results.pooled[r,8] <- burnin*nchain
+      results.pooled[r,9] <- niter*nchain-burnin*nchain
+    }
+  # Integrating the DIC step in the function as we otherwise have to specify same information again in a new function and as we try to model a regression - an information criteria should be included in the function itself as well
+  twologlike <- rep(NA, nrow(samples.all)) # I am separating the code for the different amount of predictors again due to simplicity 
+    if(npred==1){  # DIC for one predictor
+    for(i in 1:nrow(samples.all)){ # calculating the likelihood of each iteration for dbar
+    twologlike[i] <- -2*sum(dnorm(y, mean = samples.all[i,1] + samples.all[i,2]*x, sd=sqrt(samples.all[i,3]), log = TRUE))}
+    dbar <- mean(twologlike) # Take the mean over the separate likelihoods
+    dhat <- -2*sum(dnorm(y, mean = results.pooled[1,1] + results.pooled[2,1]*x, sd=sqrt(results.pooled[3,1]), log = TRUE)) # Calculate Dhat (calculate the -2 log likelihood with the posterior means of the parameters)
+  }
+  else if(npred==2){ # DIC for two predictors
+    for(i in 1:nrow(samples.all)){
+    twologlike[i] <- -2*sum(dnorm(y, mean = samples.all[i,1] + samples.all[i,2]*x[,1] + samples.all[i,3]*x[,2], sd=sqrt(samples.all[i,4]), log = TRUE))}
+    dbar <- mean(twologlike)
+    dhat <- -2*sum(dnorm(y, mean = results.pooled[1,1] + results.pooled[2,1]*x[,1] + results.pooled[3,1]*x[,2], sd = sqrt(results.pooled[4,1]), log = TRUE))
+  }
+  else{   # DIC for four predictors
+    for(i in 1:nrow(samples.all)){
+    twologlike[i] <- -2*sum(dnorm(y, mean = samples.all[i,1] + samples.all[i,2]*x[,1] + samples.all[i,3]*x[,2] + samples.all[i,4]*x[,3] + samples.all[i,5]*x[,4], sd=sqrt(samples.all[i,6]), log = TRUE))}
+    dbar <- mean(twologlike)
+    dhat <- -2*sum(dnorm(y, mean = results.pooled[1,1] + results.pooled[2,1]*x[,1] + results.pooled[3,1]*x[,2] +  results.pooled[4,1]*x[,3]  +  results.pooled[5,1]*x[,4], sd = sqrt(results.pooled[6,1]), log = TRUE))
+      }
+    dic <- dhat + 2*(dbar - dhat) # object that can be used to compare different models
+  }
+  print(results.pooled) # give pooled estimates as default output - Rest can be obtained by saving an object where you use the function and ask for specific output
+  return(list(estimates=results.pooled, estimates_chains=results, sampled_values=samples.all, sampled_values_chains=samples.burn, burnin=samples[1:burnin], DIC = dic))
+  }
+```
+
+## 4. - Assess convergence of the model
+```{r convergence function, include=FALSE}
+convergencecheck <- function(mcmc_chains, # enter the output from the bayesian_reg function, where you get the sampled values for each chain called xxx$$sampled_values_chains
+                             maxlags, # specify a wanted number of lags for the autocorrelation
+                             seed # set a seed for reproducibility
+                             ){ # with this function you get directly the convergence information regarding trace plots, density plots, autocorrelation and acceptance rates, which are needed to evaluate the convergence of the chains
+  set.seed(seed)
+  npar <- ncol(mcmc_chains[[1]]) # defining objects which are needed in the function to have it accordingly for the number of parameters chains and iterations
+  nchains <- length(mcmc_chains)
+  niter <- length(mcmc_chains[[1]][,1]) 
+  cols <- brewer.pal(n = 8, name = "Dark2")
+  
+# NEW FUNCTION: TRACEPLOTS
+traceplot <- function(mcmc_chains){
+  par(mfrow=c(2,3))
+# Plotting the trace plot for all betas - from Intercept (ß0) to number of used predictors
+for(i in 2:npar-1){
+   plot(mcmc_chains[[1]][,i],type='l',ylab=substitute(beta[x],list(x=(i-1))),main=substitute(beta[x],list(x=(i-1))),col = cols[1])
+  for(h in 2:nchains){
+   lines(mcmc_chains[[h]][,i],col=cols[h])} # getting different lines in different colors for each chain
+}
+# Plotting the trace plot for sigma
+plot(mcmc_chains[[1]][,npar],type='l',ylab=expression(sigma^2),main=expression(sigma^2),col=cols[1])
+  for(h in 2:nchains){
+   lines(mcmc_chains[[h]][,npar],col=cols[h])} # getting different lines in different colors for each chain
+}
+# NEW FUNCTION: DENSITY PLOTS (This is included in the function as I initially planned to include it, but did not have enough space in the report)
+densityplots <- function(mcmc_chains){
+   par(mfrow=c(2,3))
+# Plotting the density for all betas - from Intercept (ß0) to number of used predictors
+for(i in 2:npar-1){
+   plot(density(mcmc_chains[[1]][,i]),type='l',ylab=substitute(beta[x],list(x=(i-1))),main=substitute(beta[x],list(x=(i-1))),col = cols[1])
+  for(h in 2:nchains){
+   lines(density(mcmc_chains[[h]][,i]),col=cols[h])} # getting different lines in different colors for each chain
+}
+# Plotting the density for sigma
+plot(density(mcmc_chains[[1]][,npar]),type='l',ylab=expression(sigma^2),main=expression(sigma^2),col=cols[1])
+  for(j in 2:nchains){
+   lines(density(mcmc_chains[[h]][,npar]),col=cols[h])}
+}
+# NEW FUNCTION: AUTOCORRELATION
+autocorrelation <- function(mcmc_chains, max_lag){
+    autocor <- vector("list",nchains) # getting different lines in different colors for each chain
+   par(mfrow=c(2,3))
+  # obtaining the autocorrelation over all chains and all estimates for a specified number of lags
+  for(h in 1:nchains){
+    autocor[[h]] <- matrix(0,max_lag,npar)
+    
+    for(i in 1:max_lag){
+      for(j in 1:npar){
+        autocor[[h]][i,j] <- cor(mcmc_chains[[h]][1:(niter-(max_lag-1)),j], mcmc_chains[[h]][i:(niter-max_lag+i),j]) # correlation is based on the sampled estimates and the number of specified lags
+      }
+    }
+  }
+  # Plotting the autocorrelation of the intercept
+  plot(autocor[[1]][,1],type="h",ylab="Intercept",xlab="Lag",col=cols[1])
+  for(i in 2:nchains){
+    lines(autocor[[i]][,1],type="h",col=cols[i]) # getting different bars in different colors for each chain
+  }
+  # Plotting the autocorrelation of the predictors
+  for(j in 2:(npar-1)){
+    plot(autocor[[1]][,j],type="h",ylab=substitute(beta[x],list(x=(j-1))),xlab="Lag",col=cols[1])
+    for(i in 2:nchains){
+      lines(autocor[[i]][,j],type="h",col=cols[i]) # getting different bars in different colors for each chain
+    }
+  }
+  # Plotting the autocorrelation of the variance
+  plot(autocor[[1]][,max(npar)],type="h",ylab=expression(sigma^2),xlab="Lag",col=cols[1])
+  for(i in 2:nchains){
+    lines(autocor[[i]][,max(npar)],type="h",col=cols[i]) # getting different bars in different colors for each chain
+  }
+}
+# Assess the acceptance ratio per chain (was also planned to be included in the report per chain, but not enough space. Only added the pooled acceptance ratio, which can be calculated by the mean of all three chains)
+acceptance_ratio <- vector("list",nchains)
+for(h in 1:nchains){
+  acceptance_ratio[[h]] <- matrix(0,npar,1)
+  for(k in 1:npar){
+acceptance_ratio[[h]][k] <- round(length(unique(mcmc_chains[[h]][,k]))/(nrow(mcmc_chains[[h]])), digits=3)
+   }
+  }
+return(list(traceplots=traceplot(mcmc_chains), densityplots=densityplots(mcmc_chains), autocorrelation=autocorrelation(mcmc_chains,maxlags), acceptance_chains= acceptance_ratio))
+  }
+```
+
+## 5. - Check a model assumption with PPP
+```{r posterior predictive p-value, include=FALSE}
+ppp <- function(sampled_values, # enter the output from the bayesian_reg function, where you get the sampled values for each chain called xxx$$sampled_values
+                         y, # enter the y variable - labeled before 
+                         x, # enter the right data set of predictors - all labeled before
+                         nsims, # enter the number of wanted simulated data sets
+                         seed # set a seed for reproducibility
+                         ){ # with this function I calculate the residuals of simulated data sets and use them and the fitted values to execute two ppp checks. As we simulate normal data our observed data set should be somewhere around 0.5 for both ppp checks to have a fitting model.
+  set.seed(seed)
+ if(is.vector(x)){
+    npred <- ncol(matrix(x))
+  } else {
+    npred <- ncol(x) # assessing the number of used predictors in the model
+  }
+  # storage for all the different needed objects
+  simdata <- array(data = NA, dim = c(nsims, length(y)))
+  fitsim <- array(data = NA, dim = c(nsims, length(y)))
+  corsimfit <- rep(0, nsims)
+  obsresiduals <- array(data = NA, dim = c(nsims, length(y)))
+  corobsfit <- rep(0, nsims)
+  pvals.hom <- rep(NA, nsims)
+  # storage for second test
+  distsimfit <- rep(0, nsims)
+  distobsfit <- rep(0, nsims)
+  pvals.lin <- rep(NA, nsims)
+  
+  # simulating the residuals and the fitted values according to the number of predictors
+  if(npred==2){ # does the same for two predictors
+  for(i in 1:nsims){
+  simdata[i,] <- rnorm(length(y), mean = sampled_values[i,1] + x[,1]*sampled_values[i,2] + x[,2]*sampled_values[i,3], sd = sqrt(sampled_values[i,4]))
+  }
+  for(i in 1:nsims){
+  fitsim[i,] <- sampled_values[i,1] + x[,1]*sampled_values[i,2] + x[,2]*sampled_values[i,3]
+  }
+  simresiduals <- simdata -fitsim
+  }
+  else{ # does the same for four predictors
+  for(i in 1:nsims){
+  simdata[i,] <- rnorm(length(y), mean = sampled_values[i,1] + x[,1]*sampled_values[i,2] + x[,2]*sampled_values[i,3] + x[,3]*sampled_values[i,4]+ x[,4]*sampled_values[i,5], sd = sqrt(sampled_values[i,6]))
+  }
+  for(i in 1:nsims){
+  fitsim[i,] <- sampled_values[i,1] + x[,1]*sampled_values[i,2] + x[,2]*sampled_values[i,3] + x[,3]*sampled_values[i,4] + x[,4]*sampled_values[i,5]
+  }
+  simresiduals <- simdata -fitsim
+  }
+  # first test statistic regarding homoscedasticity - correlation between fitted and residual values
+   for(i in 1:nsims){
+  corsimfit[i] <- cor(simresiduals[i,], fitsim[i,])
+  }
+  for(i in 1:nsims){
+  obsresiduals[i,] <- y - fitsim[i,]
+  }
+  for(i in 1:nsims){
+  corobsfit[i] <- cor(obsresiduals[i,], fitsim[i,])
+    }
+  # second test regarding linearity - mean value of distance between residual and fitted value
+  for(i in 1:nsims){
+    distsimfit[i] <- mean(simresiduals[i,1:(length(y)*0.33)]) + mean(simresiduals[i,((length(y)*0.33)+1):(length(y)*0.66)]) + mean(simresiduals[i,((length(y)*0.66)+1):length(y)]) # I split the distribution of residuals in three equal parts and take the mean of the residuals in each part. Next, I take the sum of the three parts to get one single value for each simulated data set
+  }
+
+  for(i in 1:nsims){
+    distobsfit[i] <-  mean(obsresiduals[i,1:(length(y)*0.33)]) + mean(obsresiduals[i,((length(y)*0.33)+1):(length(y)*0.66)]) + mean(obsresiduals[i,((length(y)*0.66)+1):length(y)]) # here I do the same for the observed residuals
+    }
+for(i in 1:nsims){
+  pvals.hom[i] <- ifelse(corsimfit[i] > corobsfit[i], 1, 0) # evaluates the proportion of times the simulated data set has a higher correlation then the observed dataset
+}
+ pvals.hom <- round(mean(pvals.hom),3) # gets us the PPP
+
+for(i in 1:nsims){
+  pvals.lin[i] <- ifelse(distsimfit[i] > distobsfit[i], 1, 0) # evaluates the proportion of times the simulated data set has a higher sum then the observed dataset
+}
+pvals.lin <- round(mean(pvals.lin),3) # gets us the PPP
+
+return(list(Homoscedactisty=pvals.hom, Linearity=pvals.lin))
+}
+```
+
+## 6. - Obtain parameter estimates, credible intervals
+```{r parameter estimates and credible intervals, include=FALSE}
+# the output includes the parameter estimates for each sampled parameter as well as the credible intervals and further descriptive statistics, which might be of interest
+twopred <- bayesian_reg(y, x2, init2, sigma02, mu02, 10000, 40000, 3, 976)
+twopred_O <- bayesian_reg(y, x2.1, init2, sigma02, mu02, 10000, 40000, 3, 976)
+twopred_D <- bayesian_reg(y, x2.2, init2, sigma02, mu02, 10000, 40000, 3, 976)
+twopred_OD <- bayesian_reg(y, x2.3, init2, sigma02, mu02, 10000, 40000, 3, 976)
+fourpred <- bayesian_reg(y, x4, init4, sigma04, mu04, 10000, 40000, 3, 976)
+```
+## 7. - a.) Compare multiple model by means of DIC
+```{r DIC}
+# Calculating the DIC for all models of relevance based on the output of the bayesian_reg function
+twopred_O$DIC
+twopred_D$DIC
+twopred_OD$DIC
+fourpred$DIC # comparing the DICs of all competing models with the main model.
+```
+
+## 7. - b.) Bayes factor
+```{r applying the Bayes factor, include=FALSE}
+# Models to be tested
+OLS4 <- lm(log(Salary) ~ PTS + AST + DRB + STL, data = nba) # needed for hypotheses 1 & 2
+OLS2 <- lm(log(Salary) ~ AST + DRB, data = nba) # needed for hypothesis 3
+
+set.seed(976)
+# Using the bain package to obtain the bayes factor
+# Bayes factor 1
+bf1 <- bain(OLS4, hypothesis = "PTS > 0 & DRB > 0 & AST > 0 & STL > 0", standardize = TRUE); print(bf1)
+# Bayes factor 2
+bf2 <- bain(OLS4, hypothesis = "PTS > DRB > AST> STL", standardize = TRUE); print(bf2)
+# Bayes Factor 3
+bf3 <- bain(OLS2, hypothesis = "AST> DRB", standardize = TRUE); print(bf3)
+```
+## 8. - Interpretation of the results obtained using 1 through 7
+
+```{r all estimates convergence and ppp combined}
+fourpred$estimates
+fourpred$DIC
+convergencecheck(fourpred$sampled_values_chains,50,976)
+ppp(fourpred$sampled_values,y,x4,3000,976)
+```
+
+## 9. -  Differences between Bayesian and frequentist analyses
+```{r incorporating historical data, include=FALSE}
+# getting the data set with the same variables from 4 years ago - Using the data as prior knowledge to obtain more accurate and credible estimates
+nba1617 <- read.table("Data/nba1617.csv", sep=",", header=T)
+OLS4_1 <- lm(log(season17_18) ~ PTS + AST + DRB + STL, data = nba1617)
+summary(OLS4_1) # exclude "include=FALSE" to check the estimates I included
+# changing the priors to be informative priors for the normal distribution
+sigma04_i <- c(0.124881,0.016045,0.048386,0.043916,0.209708); mu04_i <- c(13.161101,0.071320,0.004114,0.286013,0.540171)
+fourpred_i <- bayesian_reg(y, x4, init4, sigma04_i, mu04_i, 10000, 40000, 3, 976)
+rownames(fourpred_i$estimates) <- c("Intercept", "Points per game", "Assists per game", "Defensive Rebounds per game", "Steals per game", "Variance")
+```
+
+```{r compare estimates of models with and without prior knowledge}
+# comparing the outputs of the regressions with informative vs. uninformative priors
+fourpred_i$estimates
+fourpred_i$DIC
+fourpred$estimates
+fourpred$DIC
+```
