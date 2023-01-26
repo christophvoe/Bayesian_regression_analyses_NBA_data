@@ -27,7 +27,7 @@ This repo contains several files for the analyses of this research question. Mai
 |[3. Manuscript](https://github.com/christophvoe/Bayesian_regression_analyses_NBA_data/tree/main/Manuscript)        |R-Markdown-script to obtain Manuscript with minimal code to answer RQ|
 |[/Data](https://github.com/christophvoe/Bayesian_regression_analyses_NBA_data/tree/main/Data)                          |Folder containing scraped data. One for main analyses and one for historical data|
 |[/Functions](https://github.com/christophvoe/Bayesian_regression_analyses_NBA_data/tree/main/Functions)                     |Folder containing  helper functions. Needed for all analyses!|
-|[/Manuscript](https://github.com/christophvoe/Influence-of-Spectators-on-the-Home-advantage-in-professional-european-football/tree/main/Manuscript)                    |Folder containing pdf versions of Rmd files|
+|[/Manuscript](https://github.com/christophvoe/Bayesian_regression_analyses_NBA_data/tree/main/Manuscript)                    |Folder containing pdf versions of Rmd files|
 
 For any help with the files in this archive, please contact Christoph Völtzke (voeltzke.christoph@gmail.com). 
 
